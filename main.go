@@ -62,7 +62,6 @@ func main() {
 			select {
 			case <-ticker.C:
 				{
-					log.Print(thisClientPos)
 					// Move playerBlob (server controls the blob) toward thisClientPos (client cursor location), write back out to client
 					xDist := thisClientPos.X - playerBlob.X
 					yDist := thisClientPos.Y - playerBlob.Y
