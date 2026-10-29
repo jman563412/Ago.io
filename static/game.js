@@ -1,4 +1,6 @@
 // @ts-check
+const worldSize = 2000
+
 const mainCanvas = /** @type {HTMLCanvasElement} */ (document.getElementById("maincanvas"))
 
 mainCanvas.width = window.innerWidth
@@ -35,11 +37,11 @@ socket.addEventListener("message", (event) => {
 
     // Use different color for outside of map
     canvasContext.fillStyle = "#1e1e1e"
-    canvasContext.fillRect(0, 0, 2000, 2000)
+    canvasContext.fillRect(0, 0, worldSize, worldSize)
 
     // World border
     canvasContext.strokeStyle = "white"
-    canvasContext.strokeRect(0, 0, 2000, 2000)
+    canvasContext.strokeRect(0, 0, worldSize, worldSize)
 
     // Drawing/filling circle
     canvasContext.beginPath()

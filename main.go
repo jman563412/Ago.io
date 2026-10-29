@@ -9,6 +9,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const worldSize = 2000
+
 type posUpdate struct {
 	X,
 	Y,
@@ -76,6 +78,8 @@ func main() {
 							playerBlob.R,
 						}
 					}
+					clampPlayerBlob(&playerBlob)
+
 					err = conn.WriteJSON(playerBlob)
 					if err != nil {
 						log.Print("Error writing new blob pos to client...", err)
@@ -116,5 +120,20 @@ func clientPosReadLoop(conn *websocket.Conn, channel chan posUpdate) {
 
 		channel <- thisPosUpdate
 		// log.Print("Client msg received: ", thisPosUpdate)
+	}
+}
+
+// Clamp blob position to map borders for X, Y
+func clampPlayerBlob(playerBlob *posUpdate) {
+	if playerBlob.X < 0 {
+		playerBlob.X = 0
+	} else if playerBlob.X > worldSize {
+		playerBlob.X = worldSize
+	}
+
+	if playerBlob.Y < 0 {
+		playerBlob.Y = 0
+	} else if playerBlob.Y > worldSize {
+		playerBlob.Y = worldSize
 	}
 }
