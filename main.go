@@ -35,16 +35,6 @@ func main() {
 		}
 		defer conn.Close()
 
-		err = conn.WriteJSON(posUpdate{
-			X: 200,
-			Y: 150,
-			R: 30,
-		})
-		if err != nil {
-			log.Print("Error sending client pos update: ", err)
-			return
-		}
-
 		thisClientChan := make(chan posUpdate)
 		go clientPosReadLoop(conn, thisClientChan)
 
@@ -52,11 +42,11 @@ func main() {
 		stepSize := 5.0
 
 		playerBlob := posUpdate{
-			200,
-			150,
+			1000,
+			1000,
 			30,
 		}
-		var thisClientPos posUpdate
+		thisClientPos := playerBlob
 		var ok bool
 		for {
 			select {
