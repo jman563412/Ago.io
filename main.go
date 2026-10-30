@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -10,6 +11,30 @@ import (
 )
 
 const worldSize = 2000
+const pelletCount = 50
+const initialPlayerRadius = 50
+
+// const pelletRadius = 30
+
+type pellet struct {
+	Id,
+	X,
+	Y int
+}
+
+var pelletMap = make(map[int]pellet)
+
+func initializePelletMap() {
+	for i := range pelletCount {
+		thisPellet := pellet{
+			i,
+			rand.Intn(worldSize),
+			rand.Intn(worldSize),
+		}
+		pelletMap[i] = thisPellet
+	}
+	log.Println("Created pelletMap")
+}
 
 type posUpdate struct {
 	X,
@@ -17,7 +42,14 @@ type posUpdate struct {
 	R int
 }
 
+type ClientUpdate struct {
+	Pellets   map[int]pellet
+	PlayerPos posUpdate
+}
+
 func main() {
+	initializePelletMap()
+
 	fileServer := http.FileServer(http.Dir("./static"))
 	http.Handle("/", fileServer)
 
@@ -46,7 +78,7 @@ func main() {
 		playerBlob := posUpdate{
 			1000,
 			1000,
-			30,
+			initialPlayerRadius,
 		}
 		thisClientPos := playerBlob
 		var ok bool
@@ -80,7 +112,12 @@ func main() {
 					}
 					clampPlayerBlob(&playerBlob)
 
-					err = conn.WriteJSON(playerBlob)
+					thisUpdate := ClientUpdate{
+						pelletMap,
+						playerBlob,
+					}
+
+					err = conn.WriteJSON(thisUpdate)
 					if err != nil {
 						log.Print("Error writing new blob pos to client...", err)
 						return

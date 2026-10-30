@@ -1,5 +1,6 @@
 // @ts-check
 const worldSize = 2000
+const pelletRadius = 30
 
 const mainCanvas = /** @type {HTMLCanvasElement} */ (document.getElementById("maincanvas"))
 
@@ -24,14 +25,17 @@ socket.addEventListener("message", (event) => {
     canvasContext.clearRect(0, 0, mainCanvas.width, mainCanvas.height)
     
     const msg = JSON.parse(event.data)
+    const pellets = msg.Pellets
+    const playerPos = msg.PlayerPos
+    
 
     // For inner world, border and circle, translate canvas such that circle remains centered
     const midpointX = window.innerWidth / 2
     const midpointY = window.innerHeight / 2
     // Circle position now starts from msg.X + (center - msg.X) = center, same for Y, always centered
     // Border position now starts from center - msg.X, same for Y, same idea for outer map
-    offsetX = midpointX - msg.X
-    offsetY = midpointY - msg.Y
+    offsetX = midpointX - playerPos.X
+    offsetY = midpointY - playerPos.Y
     canvasContext.setTransform(1, 0, 0, 1, offsetX, offsetY)
 
 
@@ -43,12 +47,19 @@ socket.addEventListener("message", (event) => {
     canvasContext.strokeStyle = "white"
     canvasContext.strokeRect(0, 0, worldSize, worldSize)
 
+    // Pellets
+    canvasContext.fillStyle = "grey"
+    Object.values(pellets).forEach(pellet => {
+        canvasContext.beginPath()
+        canvasContext.arc(pellet.X, pellet.Y, pelletRadius, 0, 2 * Math.PI)
+        canvasContext.fill()
+    })
+
     // Drawing/filling circle
     canvasContext.beginPath()
     canvasContext.fillStyle = "red"
-
     // Arc only traces the path, need .fill() to actually color the path
-    canvasContext.arc(msg.X, msg.Y, msg.R, 0, 2 * Math.PI)
+    canvasContext.arc(playerPos.X, playerPos.Y, playerPos.R, 0, 2 * Math.PI)
     canvasContext.fill()
 
     if (socket.readyState === WebSocket.OPEN) {
