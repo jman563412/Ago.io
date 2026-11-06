@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -13,6 +14,8 @@ import (
 const worldSize = 2000
 const pelletCount = 50
 const initialPlayerRadius = 50
+
+var counter atomic.Int64
 
 // const pelletRadius = 30
 
@@ -47,6 +50,12 @@ type ClientUpdate struct {
 	PlayerPos posUpdate
 }
 
+type ClientMsg struct {
+	id         int64
+	isJoining  bool
+	updateChan chan ClientUpdate
+}
+
 func main() {
 	initializePelletMap()
 
@@ -54,6 +63,9 @@ func main() {
 	http.Handle("/", fileServer)
 
 	wsUpgrader := websocket.Upgrader{}
+
+	// Used by handlers to send client conn updates to ticker loop
+	tickerInputChan := make(chan ClientMsg)
 
 	wsHandler := func(w http.ResponseWriter, r *http.Request) {
 		// ~30 ticks/s
@@ -67,6 +79,15 @@ func main() {
 			log.Print("Something wrong with ws connection: ", err)
 			return
 		}
+		thisId := counter.Add(1)
+		thisUpdateChan := make(chan ClientUpdate, 5)
+		joinMsg := ClientMsg{
+			thisId,
+			true,
+			thisUpdateChan,
+		}
+		tickerInputChan <- joinMsg
+
 		defer conn.Close()
 
 		thisClientChan := make(chan posUpdate)
@@ -137,9 +158,27 @@ func main() {
 
 	http.HandleFunc("/ws", wsHandler)
 
+	go GameTickerLoop(tickerInputChan)
 	err := http.ListenAndServe(":8090", nil)
 	if err != nil {
 		log.Fatalf("Server error: %s", err)
+	}
+}
+
+// inputChan: for managing client joins/leaves and cursor position updates (receiving)
+func GameTickerLoop(inputChan <-chan ClientMsg) {
+	// map of client id -> update chan is for blob location + pellet updates (sending)
+	updateChansMap := make(map[int64]chan ClientUpdate)
+
+	for {
+		select {
+		case msg := <-inputChan:
+			if msg.isJoining {
+				updateChansMap[msg.id] = msg.updateChan
+				log.Println("Ticker Loop chans map has ", len(updateChansMap), " conns")
+			}
+
+		}
 	}
 }
 
