@@ -56,6 +56,7 @@ type posUpdate struct {
 type ClientUpdate struct {
 	Pellets   map[int]pellet
 	PlayerPos posUpdate
+	AllBlobs  map[int64]posUpdate
 }
 
 type ClientMsg struct {
@@ -164,6 +165,8 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 			}
 
 		case <-ticker.C:
+
+			// First step updates every player blob position
 			for player := range playerMap {
 				var thisPlayerBlob posUpdate
 
@@ -193,15 +196,29 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 				clampPlayerBlob(&thisPlayerBlob)
 				thisPlayer.blobPosition = thisPlayerBlob
 				playerMap[player] = thisPlayer
+			}
 
-				thisUpdate := ClientUpdate{
-					pelletMap,
-					thisPlayerBlob,
+			AllBlobs := make(map[int64]posUpdate)
+			// Second step builds map of position updates and sends to ALL players
+			for player, value := range playerMap {
+				thisPosUpdate := posUpdate{
+					value.blobPosition.X,
+					value.blobPosition.Y,
+					value.blobPosition.R,
 				}
-				thisPlayerChan := updateChansMap[player]
+				AllBlobs[player] = thisPosUpdate
+			}
 
+			for player, value := range playerMap {
+				thisClientUpdate := ClientUpdate{
+					pelletMap,
+					value.blobPosition,
+					AllBlobs,
+				}
+
+				thisPlayerChan := updateChansMap[player]
 				select {
-				case thisPlayerChan <- thisUpdate:
+				case thisPlayerChan <- thisClientUpdate:
 
 				default:
 				}

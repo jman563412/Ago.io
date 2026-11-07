@@ -55,6 +55,14 @@ socket.addEventListener("message", (event) => {
         canvasContext.fill()
     })
 
+    // All players
+    canvasContext.fillStyle = "yellow"
+    Object.values(msg.AllBlobs).forEach(blob => {
+        canvasContext.beginPath()
+        canvasContext.arc(blob.X, blob.Y, blob.R, 0, 2 * Math.PI)
+        canvasContext.fill()
+    })
+
     // Drawing/filling circle
     canvasContext.beginPath()
     canvasContext.fillStyle = "red"
