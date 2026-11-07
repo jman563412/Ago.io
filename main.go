@@ -61,6 +61,7 @@ type ClientUpdate struct {
 type ClientMsg struct {
 	id         int64
 	isJoining  bool
+	isLeaving  bool
 	updateChan chan ClientUpdate
 	cursorPos  posUpdate
 }
@@ -148,7 +149,13 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 					initialPos,
 					initialPos,
 				}
-				log.Println("Ticker Loop chans map has ", len(updateChansMap), " conns")
+				log.Println("Ticker Loop chans map has ", len(updateChansMap), " players remaining")
+			} else if msg.isLeaving {
+				close(updateChansMap[msg.id])
+				delete(updateChansMap, msg.id)
+				delete(playerMap, msg.id)
+				log.Println("Player ID ", msg.id, " left, ", len(playerMap), " players remaining")
+
 			} else {
 				// Update player's cursor position in map
 				thisPlayer := playerMap[msg.id]
@@ -211,6 +218,12 @@ func clientPosReadLoop(conn *websocket.Conn, thisPlayerId int64, updateChan chan
 		err := conn.ReadJSON(&thisPosUpdate)
 		if err != nil {
 			log.Print("Error receiving client position: ", err)
+			cliLeavingUpdate := ClientMsg{
+				id:        thisPlayerId,
+				isJoining: false,
+				isLeaving: true,
+			}
+			updateChan <- cliLeavingUpdate
 			return
 		}
 
