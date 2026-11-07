@@ -15,6 +15,9 @@ const worldSize = 2000
 const pelletCount = 50
 const initialPlayerRadius = 50
 
+// Min threshold for snapping to cursor
+const stepSize = 5.0
+
 var counter atomic.Int64
 
 // const pelletRadius = 30
@@ -39,6 +42,11 @@ func initializePelletMap() {
 	log.Println("Created pelletMap")
 }
 
+type player struct {
+	cursorTarget,
+	blobPosition posUpdate
+}
+
 type posUpdate struct {
 	X,
 	Y,
@@ -54,6 +62,7 @@ type ClientMsg struct {
 	id         int64
 	isJoining  bool
 	updateChan chan ClientUpdate
+	cursorPos  posUpdate
 }
 
 func main() {
@@ -68,9 +77,6 @@ func main() {
 	tickerInputChan := make(chan ClientMsg)
 
 	wsHandler := func(w http.ResponseWriter, r *http.Request) {
-		// ~30 ticks/s
-		ticker := time.NewTicker(time.Millisecond * 33)
-		defer ticker.Stop()
 
 		log.Println("WS path hit")
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -79,76 +85,29 @@ func main() {
 			log.Print("Something wrong with ws connection: ", err)
 			return
 		}
+
 		thisId := counter.Add(1)
 		thisUpdateChan := make(chan ClientUpdate, 5)
 		joinMsg := ClientMsg{
-			thisId,
-			true,
-			thisUpdateChan,
+			id:         thisId,
+			isJoining:  true,
+			updateChan: thisUpdateChan,
 		}
 		tickerInputChan <- joinMsg
 
 		defer conn.Close()
 
-		thisClientChan := make(chan posUpdate)
-		go clientPosReadLoop(conn, thisClientChan)
-
-		// Min threshold for snapping to cursor
-		stepSize := 5.0
-
-		playerBlob := posUpdate{
-			1000,
-			1000,
-			initialPlayerRadius,
-		}
-		thisClientPos := playerBlob
-		var ok bool
+		go clientPosReadLoop(conn, thisId, tickerInputChan)
 		for {
 			select {
-			case <-ticker.C:
+			case thisClientUpdate, ok := <-thisUpdateChan:
 				{
-					// Move playerBlob (server controls the blob) toward thisClientPos (client cursor location), write back out to client
-					xDist := thisClientPos.X - playerBlob.X
-					yDist := thisClientPos.Y - playerBlob.Y
-					// Get the distance using pythagorean
-					dist := math.Hypot(float64(xDist), float64(yDist))
-
-					// If distance is below threshold for step size, just snap blob to client cursor
-					if dist < stepSize {
-						playerBlob = posUpdate{
-							thisClientPos.X,
-							thisClientPos.Y,
-							playerBlob.R,
-						}
-					} else {
-						// The trip is this many steps long
-						stepsToCursor := dist / stepSize
-
-						// Move 1 step in the x and y direction
-						playerBlob = posUpdate{
-							playerBlob.X + int(math.Round(float64(xDist)/stepsToCursor)),
-							playerBlob.Y + int(math.Round(float64(yDist)/stepsToCursor)),
-							playerBlob.R,
-						}
-					}
-					clampPlayerBlob(&playerBlob)
-
-					thisUpdate := ClientUpdate{
-						pelletMap,
-						playerBlob,
-					}
-
-					err = conn.WriteJSON(thisUpdate)
-					if err != nil {
-						log.Print("Error writing new blob pos to client...", err)
+					if !ok {
 						return
 					}
-				}
-
-			case thisClientPos, ok = <-thisClientChan:
-				{
-					// !ok represents tab closed case, otherwise we'd keep receiving {0, 0, 0} indefinitely
-					if !ok {
+					err := conn.WriteJSON(thisClientUpdate)
+					if err != nil {
+						log.Println("Error writing ClientUpdate: ", err)
 						return
 					}
 				}
@@ -167,24 +126,85 @@ func main() {
 
 // inputChan: for managing client joins/leaves and cursor position updates (receiving)
 func GameTickerLoop(inputChan <-chan ClientMsg) {
+	// ~30 ticks/s
+	ticker := time.NewTicker(time.Millisecond * 33)
+
 	// map of client id -> update chan is for blob location + pellet updates (sending)
 	updateChansMap := make(map[int64]chan ClientUpdate)
+	// Same player ids mapped to cursor + blob positions
+	playerMap := make(map[int64]player)
 
 	for {
 		select {
 		case msg := <-inputChan:
 			if msg.isJoining {
 				updateChansMap[msg.id] = msg.updateChan
+				initialPos := posUpdate{
+					1000,
+					1000,
+					initialPlayerRadius,
+				}
+				playerMap[msg.id] = player{
+					initialPos,
+					initialPos,
+				}
 				log.Println("Ticker Loop chans map has ", len(updateChansMap), " conns")
+			} else {
+				// Update player's cursor position in map
+				thisPlayer := playerMap[msg.id]
+				thisPlayer.cursorTarget = msg.cursorPos
+				playerMap[msg.id] = thisPlayer
+			}
+
+		case <-ticker.C:
+			for player := range playerMap {
+				var thisPlayerBlob posUpdate
+
+				thisPlayer := playerMap[player]
+				// Move playerBlob (server controls the blob) toward thisClientPos (client cursor location), write back out to client
+				xDist := thisPlayer.cursorTarget.X - thisPlayer.blobPosition.X
+				yDist := thisPlayer.cursorTarget.Y - thisPlayer.blobPosition.Y
+				// Get the distance using pythagorean
+				dist := math.Hypot(float64(xDist), float64(yDist))
+
+				// If distance is below threshold for step size, just snap blob to client cursor
+				if dist < stepSize {
+					thisPlayerBlob = posUpdate{
+						thisPlayer.cursorTarget.X,
+						thisPlayer.cursorTarget.Y,
+						thisPlayer.blobPosition.R,
+					}
+				} else {
+					// The trip is this many steps long
+					stepsToCursor := dist / stepSize
+					thisPlayerBlob = posUpdate{
+						thisPlayer.blobPosition.X + int(math.Round(float64(xDist)/stepsToCursor)),
+						thisPlayer.blobPosition.Y + int(math.Round(float64(yDist)/stepsToCursor)),
+						thisPlayer.blobPosition.R,
+					}
+				}
+				clampPlayerBlob(&thisPlayerBlob)
+				thisPlayer.blobPosition = thisPlayerBlob
+				playerMap[player] = thisPlayer
+
+				thisUpdate := ClientUpdate{
+					pelletMap,
+					thisPlayerBlob,
+				}
+				thisPlayerChan := updateChansMap[player]
+
+				select {
+				case thisPlayerChan <- thisUpdate:
+
+				default:
+				}
 			}
 
 		}
 	}
 }
 
-func clientPosReadLoop(conn *websocket.Conn, channel chan posUpdate) {
-	// Sender closes the channel
-	defer close(channel)
+func clientPosReadLoop(conn *websocket.Conn, thisPlayerId int64, updateChan chan<- ClientMsg) {
 	for {
 		thisPosUpdate := posUpdate{}
 
@@ -194,7 +214,12 @@ func clientPosReadLoop(conn *websocket.Conn, channel chan posUpdate) {
 			return
 		}
 
-		channel <- thisPosUpdate
+		cliUpdate := ClientMsg{
+			id:        thisPlayerId,
+			isJoining: false,
+			cursorPos: thisPosUpdate,
+		}
+		updateChan <- cliUpdate
 		// log.Print("Client msg received: ", thisPosUpdate)
 	}
 }
