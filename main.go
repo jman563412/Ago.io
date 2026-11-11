@@ -134,6 +134,10 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 
 	// map of client id -> update chan is for blob location + pellet updates (sending)
 	updateChansMap := make(map[int64]chan ClientUpdate)
+
+	// Subsequent pellet IDs should start after last value from the initial group
+	nextPelletId := pelletCount
+
 	// Same player ids mapped to cursor + blob positions
 	playerMap := make(map[int64]player)
 
@@ -166,6 +170,8 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 			}
 
 		case <-ticker.C:
+			// Track pellets eaten per tick so we can replace them
+			pelletsEatenCounter := 0
 
 			// First step updates every player blob position
 			for player := range playerMap {
@@ -205,11 +211,23 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 					if dist < float64(thisPlayerBlob.R) {
 						delete(pelletMap, pelletId)
 						thisPlayerBlob.R += 1
+						pelletsEatenCounter += 1
 					}
 				}
 
 				thisPlayer.blobPosition = thisPlayerBlob
 				playerMap[player] = thisPlayer
+			}
+
+			// Replace each of the eaten pellets with new one in random position
+			for range pelletsEatenCounter {
+				nextPellet := pellet{
+					nextPelletId,
+					rand.Intn(worldSize),
+					rand.Intn(worldSize),
+				}
+				pelletMap[nextPelletId] = nextPellet
+				nextPelletId += 1
 			}
 
 			// Avoid data race from concurrent pelletmap deletes and writes to clients by just giving clients a copy
