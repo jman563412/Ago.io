@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"maps"
 	"math"
 	"math/rand"
 	"net/http"
@@ -194,9 +195,26 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 					}
 				}
 				clampPlayerBlob(&thisPlayerBlob)
+
+				// Eat every pellet within distance of this client blob's radius and increase the client's radius size
+				for pelletId, thisPellet := range pelletMap {
+					xDist := thisPlayerBlob.X - thisPellet.X
+					yDist := thisPlayerBlob.Y - thisPellet.Y
+					dist := math.Hypot(float64(xDist), float64(yDist))
+
+					if dist < float64(thisPlayerBlob.R) {
+						delete(pelletMap, pelletId)
+						thisPlayerBlob.R += 1
+					}
+				}
+
 				thisPlayer.blobPosition = thisPlayerBlob
 				playerMap[player] = thisPlayer
 			}
+
+			// Avoid data race from concurrent pelletmap deletes and writes to clients by just giving clients a copy
+			pelletMapCopy := make(map[int]pellet)
+			maps.Copy(pelletMapCopy, pelletMap)
 
 			AllBlobs := make(map[int64]posUpdate)
 			// Second step builds map of position updates and sends to ALL players
@@ -211,7 +229,7 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 
 			for player, value := range playerMap {
 				thisClientUpdate := ClientUpdate{
-					pelletMap,
+					pelletMapCopy,
 					value.blobPosition,
 					AllBlobs,
 				}
