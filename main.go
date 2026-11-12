@@ -46,6 +46,7 @@ func initializePelletMap() {
 type player struct {
 	cursorTarget,
 	blobPosition posUpdate
+	isDead bool
 }
 
 type posUpdate struct {
@@ -154,6 +155,7 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 				playerMap[msg.id] = player{
 					initialPos,
 					initialPos,
+					false,
 				}
 				log.Println("Ticker Loop chans map has ", len(updateChansMap), " players remaining")
 			} else if msg.isLeaving {
@@ -178,6 +180,12 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 				var thisPlayerBlob posUpdate
 
 				thisPlayer := playerMap[player]
+
+				// Dead players don't update positions
+				if thisPlayer.isDead {
+					continue
+				}
+
 				// Move playerBlob (server controls the blob) toward thisClientPos (client cursor location), write back out to client
 				xDist := thisPlayer.cursorTarget.X - thisPlayer.blobPosition.X
 				yDist := thisPlayer.cursorTarget.Y - thisPlayer.blobPosition.Y
@@ -230,29 +238,67 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 				nextPelletId += 1
 			}
 
+			// Larger playerBlob eats smaller playerBlob
+			for eaterId := range playerMap {
+				for preyId := range playerMap {
+					thisEater := playerMap[eaterId]
+					thisPrey := playerMap[preyId]
+
+					// A blob can't eat itself, skip dead players
+					if preyId == eaterId || thisEater.isDead || thisPrey.isDead {
+						continue
+					}
+
+					// If blob 1's radius is larger than blob 2's radius
+					if thisEater.blobPosition.R > thisPrey.blobPosition.R {
+						xDist := thisEater.blobPosition.X - thisPrey.blobPosition.X
+						yDist := thisEater.blobPosition.Y - thisPrey.blobPosition.Y
+						dist := math.Hypot(float64(xDist), float64(yDist))
+
+						// AND if distance between blob 1 and blob 2 is less than blob 1's radius, eat it
+						if dist < float64(thisEater.blobPosition.R) {
+							thisPrey.isDead = true
+
+							// Eater gains half of prey's size
+							thisEater.blobPosition.R += thisPrey.blobPosition.R / 2
+
+							playerMap[eaterId] = thisEater
+							playerMap[preyId] = thisPrey
+						}
+					}
+				}
+			}
+
 			// Avoid data race from concurrent pelletmap deletes and writes to clients by just giving clients a copy
 			pelletMapCopy := make(map[int]pellet)
 			maps.Copy(pelletMapCopy, pelletMap)
 
 			AllBlobs := make(map[int64]posUpdate)
 			// Second step builds map of position updates and sends to ALL players
-			for player, value := range playerMap {
-				thisPosUpdate := posUpdate{
-					value.blobPosition.X,
-					value.blobPosition.Y,
-					value.blobPosition.R,
+			for playerId, player := range playerMap {
+
+				// Dead players aren't drawn for anyone so they're omitted from the AllBlobs in the clients' updates
+				if player.isDead {
+					continue
 				}
-				AllBlobs[player] = thisPosUpdate
+
+				thisPosUpdate := posUpdate{
+					player.blobPosition.X,
+					player.blobPosition.Y,
+					player.blobPosition.R,
+				}
+				AllBlobs[playerId] = thisPosUpdate
 			}
 
-			for player, value := range playerMap {
+			// Send the updated players to each player's channel
+			for playerId, player := range playerMap {
 				thisClientUpdate := ClientUpdate{
 					pelletMapCopy,
-					value.blobPosition,
+					player.blobPosition,
 					AllBlobs,
 				}
 
-				thisPlayerChan := updateChansMap[player]
+				thisPlayerChan := updateChansMap[playerId]
 				select {
 				case thisPlayerChan <- thisClientUpdate:
 
