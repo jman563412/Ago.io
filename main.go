@@ -21,8 +21,6 @@ const stepSize = 5.0
 
 var counter atomic.Int64
 
-// const pelletRadius = 30
-
 type pellet struct {
 	Id,
 	X,
@@ -187,7 +185,7 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 					continue
 				}
 
-				// Move playerBlob (server controls the blob) toward thisClientPos (client cursor location), write back out to client
+				// Move player's blob towards their cursor position
 				xDist := thisPlayer.cursorTarget.X - thisPlayer.blobPosition.X
 				yDist := thisPlayer.cursorTarget.Y - thisPlayer.blobPosition.Y
 				// Get the distance using pythagorean
@@ -275,7 +273,7 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 			maps.Copy(pelletMapCopy, pelletMap)
 
 			AllBlobs := make(map[int64]posUpdate)
-			// Second step builds map of position updates and sends to ALL players
+			// Build map of every player's position for ClientUpdate
 			for playerId, player := range playerMap {
 
 				// Dead players aren't drawn for anyone so they're omitted from the AllBlobs in the clients' updates

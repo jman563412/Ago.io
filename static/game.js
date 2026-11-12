@@ -41,8 +41,8 @@ socket.addEventListener("message", (event) => {
     // For inner world, border and circle, translate canvas such that circle remains centered
     const midpointX = window.innerWidth / 2
     const midpointY = window.innerHeight / 2
-    // Circle position now starts from msg.X + (center - msg.X) = center, same for Y, always centered
-    // Border position now starts from center - msg.X, same for Y, same idea for outer map
+    // Circle position now starts from playerPos.X + (center - playerPos.X) = center, same for Y, always centered
+    // Border position now starts from center - playerPos.X, same for Y, same idea for outer map
     offsetX = midpointX - playerPos.X
     offsetY = midpointY - playerPos.Y
     canvasContext.setTransform(1, 0, 0, 1, offsetX, offsetY)
