@@ -10,6 +10,11 @@ mainCanvas.height = window.innerHeight
 const canvasContext = mainCanvas.getContext("2d")
 if (!canvasContext) throw new Error("Unable to get 2d canvas context")
 
+const restartButton = document.getElementById("restart")
+if (!restartButton) throw new Error("Unable to get restart button")
+// Reload the page to restart the connection loop
+restartButton.addEventListener("click", (event) => location.reload())
+
 let offsetX = 0
 let offsetY = 0
 let mouseCoordX = window.innerWidth / 2
@@ -28,6 +33,10 @@ socket.addEventListener("message", (event) => {
     const pellets = msg.Pellets
     const playerPos = msg.PlayerPos
     
+    // If player is dead, show restart button
+    if (msg.IsDead) {
+        restartButton.hidden = false
+    }
 
     // For inner world, border and circle, translate canvas such that circle remains centered
     const midpointX = window.innerWidth / 2
@@ -63,12 +72,15 @@ socket.addEventListener("message", (event) => {
         canvasContext.fill()
     })
 
-    // Drawing/filling circle
-    canvasContext.beginPath()
-    canvasContext.fillStyle = "red"
-    // Arc only traces the path, need .fill() to actually color the path
-    canvasContext.arc(playerPos.X, playerPos.Y, playerPos.R, 0, 2 * Math.PI)
-    canvasContext.fill()
+    // Skip drawing this player's circle if they are dead
+    if (!msg.IsDead) {
+        // Drawing/filling this client's circle
+        canvasContext.beginPath()
+        canvasContext.fillStyle = "red"
+        // Arc only traces the path, need .fill() to actually color the path
+        canvasContext.arc(playerPos.X, playerPos.Y, playerPos.R, 0, 2 * Math.PI)
+        canvasContext.fill()
+    }
 
     if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({

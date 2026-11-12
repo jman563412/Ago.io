@@ -59,6 +59,7 @@ type ClientUpdate struct {
 	Pellets   map[int]pellet
 	PlayerPos posUpdate
 	AllBlobs  map[int64]posUpdate
+	IsDead    bool
 }
 
 type ClientMsg struct {
@@ -296,6 +297,7 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 					pelletMapCopy,
 					player.blobPosition,
 					AllBlobs,
+					player.isDead,
 				}
 
 				thisPlayerChan := updateChansMap[playerId]
