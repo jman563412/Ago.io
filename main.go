@@ -19,7 +19,13 @@ const initialPlayerRadius = 50
 // Min threshold for snapping to cursor
 const stepSize = 5.0
 
+// Client ID generator
 var counter atomic.Int64
+
+// Used by handlers to send client conn updates to ticker loop
+var tickerInputChan = make(chan ClientMsg)
+
+var wsUpgrader = websocket.Upgrader{}
 
 type pellet struct {
 	Id,
@@ -73,44 +79,6 @@ func main() {
 
 	fileServer := http.FileServer(http.Dir("./static"))
 	http.Handle("/", fileServer)
-
-	wsUpgrader := websocket.Upgrader{}
-
-	// Used by handlers to send client conn updates to ticker loop
-	tickerInputChan := make(chan ClientMsg)
-
-	wsHandler := func(w http.ResponseWriter, r *http.Request) {
-
-		log.Println("WS path hit")
-		conn, err := wsUpgrader.Upgrade(w, r, nil)
-
-		if err != nil {
-			log.Print("Something wrong with ws connection: ", err)
-			return
-		}
-
-		thisId := counter.Add(1)
-		thisUpdateChan := make(chan ClientUpdate, 5)
-		joinMsg := ClientMsg{
-			id:         thisId,
-			isJoining:  true,
-			updateChan: thisUpdateChan,
-		}
-		tickerInputChan <- joinMsg
-
-		defer conn.Close()
-
-		go clientPosReadLoop(conn, thisId, tickerInputChan)
-
-		for thisClientUpdate := range thisUpdateChan {
-			err := conn.WriteJSON(thisClientUpdate)
-			if err != nil {
-				log.Println("Error writing ClientUpdate: ", err)
-				return
-			}
-		}
-	}
-
 	http.HandleFunc("/ws", wsHandler)
 
 	go GameTickerLoop(tickerInputChan)
@@ -299,6 +267,37 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 				}
 			}
 
+		}
+	}
+}
+
+func wsHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("WS path hit")
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+
+	if err != nil {
+		log.Print("Something wrong with ws connection: ", err)
+		return
+	}
+
+	thisId := counter.Add(1)
+	thisUpdateChan := make(chan ClientUpdate, 5)
+	joinMsg := ClientMsg{
+		id:         thisId,
+		isJoining:  true,
+		updateChan: thisUpdateChan,
+	}
+	tickerInputChan <- joinMsg
+
+	defer conn.Close()
+
+	go clientPosReadLoop(conn, thisId, tickerInputChan)
+
+	for thisClientUpdate := range thisUpdateChan {
+		err := conn.WriteJSON(thisClientUpdate)
+		if err != nil {
+			log.Println("Error writing ClientUpdate: ", err)
+			return
 		}
 	}
 }
