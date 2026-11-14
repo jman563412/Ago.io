@@ -105,167 +105,36 @@ func GameTickerLoop(inputChan <-chan ClientMsg) {
 	for {
 		select {
 		case msg := <-inputChan:
-			if msg.isJoining {
-				updateChansMap[msg.id] = msg.updateChan
-				initialPos := posUpdate{
-					1000,
-					1000,
-					initialPlayerRadius,
-				}
-				playerMap[msg.id] = player{
-					initialPos,
-					initialPos,
-					false,
-				}
-				log.Println("Ticker Loop chans map has ", len(updateChansMap), " players remaining")
-			} else if msg.isLeaving {
-				close(updateChansMap[msg.id])
-				delete(updateChansMap, msg.id)
-				delete(playerMap, msg.id)
-				log.Println("Player ID ", msg.id, " left, ", len(playerMap), " players remaining")
-
-			} else {
-				// Update player's cursor position in map
-				thisPlayer := playerMap[msg.id]
-				thisPlayer.cursorTarget = msg.cursorPos
-				playerMap[msg.id] = thisPlayer
-			}
-
+			handleClientMsg(msg, playerMap, updateChansMap)
 		case <-ticker.C:
 			// Track pellets eaten per tick so we can replace them
-			pelletsEatenCounter := 0
+			pelletsEaten := 0
 
 			// First step updates every player blob position
-			for player := range playerMap {
-				var thisPlayerBlob posUpdate
-
-				thisPlayer := playerMap[player]
-
+			for playerId, thisPlayer := range playerMap {
 				// Dead players don't update positions
 				if thisPlayer.isDead {
 					continue
 				}
 
-				// Move player's blob towards their cursor position
-				xDist := thisPlayer.cursorTarget.X - thisPlayer.blobPosition.X
-				yDist := thisPlayer.cursorTarget.Y - thisPlayer.blobPosition.Y
-				// Get the distance using pythagorean
-				dist := math.Hypot(float64(xDist), float64(yDist))
-
-				// If distance is below threshold for step size, just snap blob to client cursor
-				if dist < stepSize {
-					thisPlayerBlob = posUpdate{
-						thisPlayer.cursorTarget.X,
-						thisPlayer.cursorTarget.Y,
-						thisPlayer.blobPosition.R,
-					}
-				} else {
-					// The trip is this many steps long
-					stepsToCursor := dist / stepSize
-					thisPlayerBlob = posUpdate{
-						thisPlayer.blobPosition.X + int(math.Round(float64(xDist)/stepsToCursor)),
-						thisPlayer.blobPosition.Y + int(math.Round(float64(yDist)/stepsToCursor)),
-						thisPlayer.blobPosition.R,
-					}
-				}
-				clampPlayerBlob(&thisPlayerBlob)
-
-				// Eat every pellet within distance of this client blob's radius and increase the client's radius size
-				for pelletId, thisPellet := range pelletMap {
-					xDist := thisPlayerBlob.X - thisPellet.X
-					yDist := thisPlayerBlob.Y - thisPellet.Y
-					dist := math.Hypot(float64(xDist), float64(yDist))
-
-					if dist < float64(thisPlayerBlob.R) {
-						delete(pelletMap, pelletId)
-						thisPlayerBlob.R += 1
-						pelletsEatenCounter += 1
-					}
-				}
+				thisPlayerBlob := moveBlob(thisPlayer)
+				pelletsEaten += eatPellets(&thisPlayerBlob)
 
 				thisPlayer.blobPosition = thisPlayerBlob
-				playerMap[player] = thisPlayer
+				playerMap[playerId] = thisPlayer
 			}
 
-			// Replace each of the eaten pellets with new one in random position
-			for range pelletsEatenCounter {
-				nextPellet := pellet{
-					nextPelletId,
-					rand.Intn(worldSize),
-					rand.Intn(worldSize),
-				}
-				pelletMap[nextPelletId] = nextPellet
-				nextPelletId += 1
-			}
+			nextPelletId = respawnPellets(pelletsEaten, nextPelletId)
 
-			// Larger playerBlob eats smaller playerBlob
-			for eaterId := range playerMap {
-				for preyId := range playerMap {
-					thisEater := playerMap[eaterId]
-					thisPrey := playerMap[preyId]
-
-					// A blob can't eat itself, skip dead players
-					if preyId == eaterId || thisEater.isDead || thisPrey.isDead {
-						continue
-					}
-
-					// If blob 1's radius is larger than blob 2's radius
-					if thisEater.blobPosition.R > thisPrey.blobPosition.R {
-						xDist := thisEater.blobPosition.X - thisPrey.blobPosition.X
-						yDist := thisEater.blobPosition.Y - thisPrey.blobPosition.Y
-						dist := math.Hypot(float64(xDist), float64(yDist))
-
-						// AND if distance between blob 1 and blob 2 is less than blob 1's radius, eat it
-						if dist < float64(thisEater.blobPosition.R) {
-							thisPrey.isDead = true
-
-							// Eater gains half of prey's size
-							thisEater.blobPosition.R += thisPrey.blobPosition.R / 2
-
-							playerMap[eaterId] = thisEater
-							playerMap[preyId] = thisPrey
-						}
-					}
-				}
-			}
+			eatPlayers(playerMap)
 
 			// Avoid data race from concurrent pelletmap deletes and writes to clients by just giving clients a copy
 			pelletMapCopy := make(map[int]pellet)
 			maps.Copy(pelletMapCopy, pelletMap)
 
-			AllBlobs := make(map[int64]posUpdate)
-			// Build map of every player's position for ClientUpdate
-			for playerId, player := range playerMap {
+			AllBlobs := buildBlobsMap(playerMap)
 
-				// Dead players aren't drawn for anyone so they're omitted from the AllBlobs in the clients' updates
-				if player.isDead {
-					continue
-				}
-
-				thisPosUpdate := posUpdate{
-					player.blobPosition.X,
-					player.blobPosition.Y,
-					player.blobPosition.R,
-				}
-				AllBlobs[playerId] = thisPosUpdate
-			}
-
-			// Send the updated players to each player's channel
-			for playerId, player := range playerMap {
-				thisClientUpdate := ClientUpdate{
-					pelletMapCopy,
-					player.blobPosition,
-					AllBlobs,
-					player.isDead,
-				}
-
-				thisPlayerChan := updateChansMap[playerId]
-				select {
-				case thisPlayerChan <- thisClientUpdate:
-
-				default:
-				}
-			}
+			sendPlayerUpdates(playerMap, updateChansMap, pelletMapCopy, AllBlobs)
 
 		}
 	}
@@ -298,6 +167,168 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Println("Error writing ClientUpdate: ", err)
 			return
+		}
+	}
+}
+
+// Adds a joining player, removes a leaving player + closes their update channel, or update's the player's cursor target
+func handleClientMsg(msg ClientMsg, playerMap map[int64]player, updateChansMap map[int64]chan ClientUpdate) {
+	if msg.isJoining {
+		updateChansMap[msg.id] = msg.updateChan
+		initialPos := posUpdate{
+			1000,
+			1000,
+			initialPlayerRadius,
+		}
+		playerMap[msg.id] = player{
+			initialPos,
+			initialPos,
+			false,
+		}
+		log.Println("Ticker Loop chans map has ", len(updateChansMap), " players remaining")
+	} else if msg.isLeaving {
+		close(updateChansMap[msg.id])
+		delete(updateChansMap, msg.id)
+		delete(playerMap, msg.id)
+		log.Println("Player ID ", msg.id, " left, ", len(playerMap), " players remaining")
+	} else {
+		// Update player's cursor position in map
+		thisPlayer := playerMap[msg.id]
+		thisPlayer.cursorTarget = msg.cursorPos
+		playerMap[msg.id] = thisPlayer
+	}
+}
+
+// Move player's blob towards their cursor position
+func moveBlob(p player) posUpdate {
+	xDist := p.cursorTarget.X - p.blobPosition.X
+	yDist := p.cursorTarget.Y - p.blobPosition.Y
+	// Get the distance using pythagorean
+	dist := math.Hypot(float64(xDist), float64(yDist))
+
+	var thisPlayerBlob posUpdate
+
+	// If distance is below threshold for step size, just snap blob to client cursor
+	if dist < stepSize {
+		thisPlayerBlob = posUpdate{
+			p.cursorTarget.X,
+			p.cursorTarget.Y,
+			p.blobPosition.R,
+		}
+	} else {
+		// The trip is this many steps long
+		stepsToCursor := dist / stepSize
+		thisPlayerBlob = posUpdate{
+			p.blobPosition.X + int(math.Round(float64(xDist)/stepsToCursor)),
+			p.blobPosition.Y + int(math.Round(float64(yDist)/stepsToCursor)),
+			p.blobPosition.R,
+		}
+	}
+	clampPlayerBlob(&thisPlayerBlob)
+
+	return thisPlayerBlob
+}
+
+// Eat every pellet within distance of this client blob's radius and increase the client's radius size
+func eatPellets(blob *posUpdate) int {
+	pelletsEaten := 0
+
+	for pelletId, thisPellet := range pelletMap {
+		dist := distance(blob.X, blob.Y, thisPellet.X, thisPellet.Y)
+
+		if dist < float64(blob.R) {
+			delete(pelletMap, pelletId)
+			blob.R += 1
+			pelletsEaten += 1
+		}
+	}
+
+	return pelletsEaten
+}
+
+// Replace each of the eaten pellets with new one in random position
+func respawnPellets(pelletsEaten, nextPelletId int) int {
+	for range pelletsEaten {
+		nextPellet := pellet{
+			nextPelletId,
+			rand.Intn(worldSize),
+			rand.Intn(worldSize),
+		}
+		pelletMap[nextPelletId] = nextPellet
+		nextPelletId += 1
+	}
+
+	return nextPelletId
+}
+
+// Updates player state in the playerMap when conditions are met for larger blob eating smaller
+func eatPlayers(playerMap map[int64]player) {
+	// Larger playerBlob eats smaller playerBlob
+	for eaterId := range playerMap {
+		for preyId := range playerMap {
+			thisEater := playerMap[eaterId]
+			thisPrey := playerMap[preyId]
+
+			// A blob can't eat itself, skip dead players
+			if preyId == eaterId || thisEater.isDead || thisPrey.isDead {
+				continue
+			}
+
+			// If blob 1's radius is larger than blob 2's radius
+			if thisEater.blobPosition.R > thisPrey.blobPosition.R {
+				dist := distance(thisEater.blobPosition.X, thisEater.blobPosition.Y, thisPrey.blobPosition.X, thisPrey.blobPosition.Y)
+
+				// AND if distance between blob 1 and blob 2 is less than blob 1's radius, eat it
+				if dist < float64(thisEater.blobPosition.R) {
+					thisPrey.isDead = true
+
+					// Eater gains half of prey's size
+					thisEater.blobPosition.R += thisPrey.blobPosition.R / 2
+
+					playerMap[eaterId] = thisEater
+					playerMap[preyId] = thisPrey
+				}
+			}
+		}
+	}
+}
+
+// Builds map of every player's position for ClientUpdate
+func buildBlobsMap(playerMap map[int64]player) map[int64]posUpdate {
+	AllBlobs := make(map[int64]posUpdate)
+	for playerId, player := range playerMap {
+
+		// Dead players aren't drawn for anyone so they're omitted from the AllBlobs in the clients' updates
+		if player.isDead {
+			continue
+		}
+
+		thisPosUpdate := posUpdate{
+			player.blobPosition.X,
+			player.blobPosition.Y,
+			player.blobPosition.R,
+		}
+		AllBlobs[playerId] = thisPosUpdate
+	}
+
+	return AllBlobs
+}
+
+// Sends the updated players to each player's channel
+func sendPlayerUpdates(playerMap map[int64]player, updateChansMap map[int64]chan ClientUpdate, pelletMapCopy map[int]pellet, allBlobs map[int64]posUpdate) {
+	for playerId, player := range playerMap {
+		thisClientUpdate := ClientUpdate{
+			pelletMapCopy,
+			player.blobPosition,
+			allBlobs,
+			player.isDead,
+		}
+
+		thisPlayerChan := updateChansMap[playerId]
+		select {
+		case thisPlayerChan <- thisClientUpdate:
+
+		default:
 		}
 	}
 }
@@ -341,4 +372,11 @@ func clampPlayerBlob(playerBlob *posUpdate) {
 	} else if playerBlob.Y > worldSize {
 		playerBlob.Y = worldSize
 	}
+}
+
+// Calculates distance between 2 points using pythagorean
+func distance(x1, y1, x2, y2 int) float64 {
+	xDist := x2 - x1
+	yDist := y2 - y1
+	return math.Hypot(float64(xDist), float64(yDist))
 }
