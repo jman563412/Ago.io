@@ -101,19 +101,12 @@ func main() {
 		defer conn.Close()
 
 		go clientPosReadLoop(conn, thisId, tickerInputChan)
-		for {
-			select {
-			case thisClientUpdate, ok := <-thisUpdateChan:
-				{
-					if !ok {
-						return
-					}
-					err := conn.WriteJSON(thisClientUpdate)
-					if err != nil {
-						log.Println("Error writing ClientUpdate: ", err)
-						return
-					}
-				}
+
+		for thisClientUpdate := range thisUpdateChan {
+			err := conn.WriteJSON(thisClientUpdate)
+			if err != nil {
+				log.Println("Error writing ClientUpdate: ", err)
+				return
 			}
 		}
 	}
