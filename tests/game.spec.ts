@@ -1,24 +1,105 @@
-import { expect, test } from "@playwright/test"
+import { expect, Page, test } from "@playwright/test"
 
-test("blob moves toward cursor", async({page}) => {
+// Helper to fetch the latest server update (sent by server and saved by client), all positions are world coords
+async function getLastUpdate(page: Page) {
+    return await page.evaluate(() => (window as any).lastUpdate)
+}
+
+// Fetches PlayerPos from window.lastUpdate
+async function getLastPlayerPos(page: Page) {
+    return (await getLastUpdate(page)).PlayerPos
+}
+
+// Helper to join game plus handle chromium mousemove on page load
+async function joinGame(page: Page) {
     // baseURL in playwright config autofills host and port
     await page.goto("/")
 
     // Wait for first playerpos update from server
     await page.waitForFunction(() => (window as any).lastUpdate)
 
+    // Chromium has a weird behavior where it emits a mousemove event at (0, 0) on page load, which steers the blob up-left for a tick
+    // Recenter the mouse and let a few ticks pass so we know blob is still 
+    await page.mouse.move(640, 360)
+    await page.waitForTimeout(100)
+}
+
+test("blob moves toward cursor", async({page}) => {
+    await joinGame(page)
+
     // Read start position
-    let startPos = await page.evaluate(() => (window as any).lastUpdate.PlayerPos)
+    const startPos = await getLastPlayerPos(page)
 
     // Initial viewport center is at (640, 360)
     await page.mouse.move(940, 360)
     await page.waitForTimeout(1000)
 
     // Read end position
-    let endPos = await page.evaluate(() => (window as any).lastUpdate.PlayerPos)
+    const endPos = await getLastPlayerPos(page)
 
     // Every 33ms tick we move 5 pixels (const stepSize = 5.0), ~150px/s. + 100 leaves room for tick timing jitter
     expect(endPos.X).toBeGreaterThanOrEqual(startPos.X + 100)
     // Mouse is level with the blob (screen Y 360), so yDist is 0 and Y never changes
     expect(endPos.Y).toBe(startPos.Y)
+})
+
+test("blob stops at map edge", async({page}) => {
+    await joinGame(page)
+
+    const startPos = await getLastPlayerPos(page)
+
+    await page.mouse.move(940, 360)
+
+    // The trip from spawn world coords (x = 1000) to map border (x = 2000) is ~150 px/s so ~6.7 seconds
+    await expect.poll(
+        () => getLastUpdate(page).then(update => update.PlayerPos.X),
+        {timeout: 10000},
+    ).toBe(2000)
+
+    // Wait some more after hitting edge of the map, pos.X should stay the same and not go outside map
+    await page.waitForTimeout(500)
+
+    const endPos = await getLastPlayerPos(page)
+
+    // X should still be at 2000, Y never changes
+    expect(endPos.X).toBe(2000)
+    expect(endPos.Y).toBe(startPos.Y)
+})
+
+test("eating pellet removes it and grows blob", async({page}) => {
+    await joinGame(page)
+
+    const update = await getLastUpdate(page)
+    const playerPos = update.PlayerPos
+    // Convert and cast it to an array of pellet struct (from server) to satisfy compiler for pellet.X/Y checks
+    const pellets = Object.values(update.Pellets) as { Id: number, X: number, Y: number}[]
+
+    // Find the nearest pellet to blob
+    let target = pellets[0]
+    let targetDist = Infinity
+    for (const pellet of pellets) {
+        const dist = Math.hypot(pellet.X - playerPos.X, pellet.Y - playerPos.Y)
+        if (dist < targetDist) {
+            target = pellet
+            targetDist = dist
+        }
+    }
+
+    // Calculate distance to target pellet and move mouse 300px toward it
+    // dx/dist and dy/dist are the direction to the pellet, dividing by dist gives the x and y parts of the unit vector
+    // * 300 puts mouse 300 px from the blob (which is at (640, 360)) in the direction of the line going THROUGH the pellet
+    const dx = target.X - playerPos.X
+    const dy = target.Y - playerPos.Y
+    const dist = Math.hypot(dx, dy)
+    await page.mouse.move(640 + 300 * dx / dist, 360 + 300 * dy / dist)
+
+    // Wait until target pellet's ID is gone (was eaten)
+    await expect.poll(
+        () => page.evaluate(id => (window as any).lastUpdate.Pellets[id], target.Id),
+        { timeout: 10_000 },
+    ).toBeUndefined()
+
+    // R should be larger after eating the pellet
+    const endPos = await getLastPlayerPos(page)
+    expect(endPos.R).toBeGreaterThan(playerPos.R)
 })
