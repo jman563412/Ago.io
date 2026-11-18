@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -82,7 +83,12 @@ func main() {
 	http.HandleFunc("/ws", wsHandler)
 
 	go GameTickerLoop(tickerInputChan)
-	err := http.ListenAndServe(":8090", nil)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8090"
+	}
+	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
 		log.Fatalf("Server error: %s", err)
 	}

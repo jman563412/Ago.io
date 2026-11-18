@@ -30,6 +30,9 @@ socket.addEventListener("message", (event) => {
     canvasContext.clearRect(0, 0, mainCanvas.width, mainCanvas.height)
     
     const msg = JSON.parse(event.data)
+    // window.lastUpdate = msg, workaround for ts-check
+    Object.assign(window, { lastUpdate: msg })
+
     const pellets = msg.Pellets
     const playerPos = msg.PlayerPos
     
