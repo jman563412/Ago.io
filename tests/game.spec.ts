@@ -1,7 +1,29 @@
 import { expect, Page, test } from "@playwright/test"
 
+// Same types from Go server
+type PosUpdate = {
+    X: number,
+    Y: number,
+    R: number,
+}
+type Pellet = {
+    Id: number,
+    X: number,
+    Y: number,
+}
+type ClientUpdate = {
+    Pellets: Record<string, Pellet>,
+    PlayerPos: PosUpdate,
+    AllBlobs: Record<string, PosUpdate>, // JSON object keys are always strings
+    IsDead: boolean,
+}
+type Pos = {
+    X: number,
+    Y: number,
+}
+
 // Helper to fetch the latest server update (sent by server and saved by client), all positions are world coords
-async function getLastUpdate(page: Page) {
+async function getLastUpdate(page: Page): Promise<ClientUpdate> {
     return await page.evaluate(() => (window as any).lastUpdate)
 }
 
@@ -11,10 +33,9 @@ async function getLastPlayerPos(page: Page) {
 }
 
 // Returns the pellet nearest to the player blob
-async function getNearestPellet(page: Page, update: any) {
+async function getNearestPellet(page: Page, update: ClientUpdate) {
     const playerPos = update.PlayerPos
-    // Convert and cast it to an array of pellet struct (from server) to satisfy compiler for pellet.X/Y checks
-    const pellets = Object.values(update.Pellets) as { Id: number, X: number, Y: number}[]
+    const pellets = Object.values(update.Pellets)
 
     // Find the nearest pellet to blob
     let target = pellets[0]
@@ -31,7 +52,7 @@ async function getNearestPellet(page: Page, update: any) {
 }
 
 // Moves the mouse in the direction of the line going through the target
-async function aimAt(page: Page, playerPos: {X: number, Y: number}, target: {X: number, Y: number}) {
+async function aimAt(page: Page, playerPos: Pos, target: Pos) {
     // Calculate distance to target pellet and move mouse 300px toward it
     // dx/dist and dy/dist are the direction to the pellet, dividing by dist gives the x and y parts of the unit vector
     // * 300 puts mouse 300 px from the blob (which is at (640, 360)) in the direction of the line going THROUGH the pellet
@@ -48,7 +69,7 @@ async function aimAt(page: Page, playerPos: {X: number, Y: number}, target: {X: 
 }
 
 // Continue steering the player blob to the target pellet until it no longer exists in the latest server update
-async function waitUntilPelletEaten(page: Page, target: {Id: number, X: number, Y: number}) {
+async function waitUntilPelletEaten(page: Page, target: Pellet) {
     await expect(async() => {
         const update = await getLastUpdate(page)
 
