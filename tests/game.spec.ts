@@ -82,6 +82,20 @@ async function waitUntilPelletEaten(page: Page, target: Pellet) {
     }).toPass({timeout: 15_000, intervals: [100]})
 }
 
+// Continue steering eater blob to prey blob until IsDead from prey blob's updates is set true
+async function waitUntilPreyEaten(eaterPage: Page, preyPage: Page) {
+    await expect(async() => {
+        const eaterLastUpdate = await getLastUpdate(eaterPage)
+        const preyLastUpdate = await getLastUpdate(preyPage)
+
+        if (!preyLastUpdate.IsDead) {
+            await aimAt(eaterPage, eaterLastUpdate.PlayerPos, preyLastUpdate.PlayerPos)
+        }
+
+        expect(preyLastUpdate.IsDead).toBe(true)
+    }).toPass({timeout: 15_000, intervals: [100]})
+}
+
 // Helper to join game plus handle chromium mousemove on page load
 async function joinGame(page: Page) {
     // baseURL in playwright config autofills host and port
@@ -176,3 +190,78 @@ test("eaten pellet gets replaced", async({page}) => {
     expect(endIds.some(id => !startIds.includes(id))).toBe(true)
 })
 
+test("bigger blob eats smaller blob", async({page}) => {
+    const eater = page
+    await joinGame(eater)
+
+    // Eater finds and eats nearest pellet to gain some size
+    const lastUpdate = await getLastUpdate(eater)
+    const nearestPellet = await getNearestPellet(eater, lastUpdate)
+    await waitUntilPelletEaten(eater, nearestPellet)
+
+    // Move eater mouse to screen center, keep blob still
+    await eater.mouse.move(640, 360)
+    const eaterBefore = await getLastPlayerPos(eater)
+
+    // page from the same browser context picks up baseURL and the viewport from playwright.config.ts
+    const prey = await eater.context().newPage()
+    // Prey spawns at (1000, 1000) and remains still bc mouse is centered
+    await joinGame(prey)
+
+    // Larger blob eats smaller
+    await waitUntilPreyEaten(eater, prey)
+
+    const final = await getLastUpdate(eater)
+    // Eater's lastUpdate.AllBlobs should no longer include the prey blob
+    expect(Object.keys(final.AllBlobs).length).toBe(1)
+    // Eater's new radius is += (prey.R / 2) = (50 / 2 = 25) to the eater's R, >= bc eater might eat pellets along the way
+    expect(final.PlayerPos.R).toBeGreaterThanOrEqual(eaterBefore.R + 25)
+})
+
+test("restart button works", async({page}) => {
+    const eater = page
+    await joinGame(eater)
+
+    // Eater finds and eats nearest pellet to gain some size
+    const lastUpdate = await getLastUpdate(eater)
+    const nearestPellet = await getNearestPellet(eater, lastUpdate)
+    await waitUntilPelletEaten(eater, nearestPellet)
+
+    // Move eater mouse to screen center, keep blob still
+    await eater.mouse.move(640, 360)
+
+    // page from the same browser context picks up baseURL and the viewport from playwright.config.ts
+    const prey = await eater.context().newPage()
+    // Prey spawns at (1000, 1000) and remains still bc mouse is centered
+    await joinGame(prey)
+
+    // Larger blob eats smaller
+    await waitUntilPreyEaten(eater, prey)
+
+    // Restart button should be visible once prey is dead
+    const restartButton = prey.locator("#restart")
+    await expect(restartButton).toBeVisible()
+
+    // prey would respawn directly under eater if we don't kill it, random player spawns still a TODO
+    await eater.close()
+
+    await restartButton.click()
+
+    // Wait for the prey to rejoin
+    await expect(async () => {
+        const update = await getLastUpdate(prey)
+        expect(update.IsDead).toBe(false)
+        expect(update.PlayerPos.R).toBe(50)
+    }).toPass({ timeout: 5_000 })
+    
+    // Button should no longer be visible
+    await expect(restartButton).toBeHidden()
+
+    // Get single pixel at screen center to check color of respawned blob
+    // We know if it's red that it's prey's actual blob and it respawned
+    const centerPixel = await prey.evaluate(() => {
+        const data = document.querySelector("canvas")!.getContext("2d")!.getImageData(640, 360, 1, 1).data
+        return Array.from(data)
+    })
+    expect(centerPixel).toEqual([255, 0, 0, 255])
+})
