@@ -132,3 +132,26 @@ test("eating pellet removes it and grows blob", async({page}) => {
     const endPos = await getLastPlayerPos(page)
     expect(endPos.R).toBeGreaterThan(playerPos.R)
 })
+
+test("eaten pellet gets replaced", async({page}) => {
+    await joinGame(page)
+
+    const update = await getLastUpdate(page)
+    const startIds = Object.keys(update.Pellets)
+
+    const target = await getNearestPellet(page, update)
+    
+    // Wait until target pellet's ID is gone like in grows blob test
+    await waitUntilPelletEaten(page, target)
+
+    const end = await getLastUpdate(page)
+    const endIds = Object.keys(end.Pellets)
+
+    // pellet map should still be length 50
+    expect(endIds.length).toBe(50)
+    // new pellet map should no longer contain the original target pellet's ID
+    expect(endIds).not.toContain(String(target.Id))
+    // new pellet map has a pellet with ID that DNE in the original
+    expect(endIds.some(id => !startIds.includes(id))).toBe(true)
+})
+
