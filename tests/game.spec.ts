@@ -10,6 +10,57 @@ async function getLastPlayerPos(page: Page) {
     return (await getLastUpdate(page)).PlayerPos
 }
 
+// Returns the pellet nearest to the player blob
+async function getNearestPellet(page: Page, update: any) {
+    const playerPos = update.PlayerPos
+    // Convert and cast it to an array of pellet struct (from server) to satisfy compiler for pellet.X/Y checks
+    const pellets = Object.values(update.Pellets) as { Id: number, X: number, Y: number}[]
+
+    // Find the nearest pellet to blob
+    let target = pellets[0]
+    let targetDist = Infinity
+    for (const pellet of pellets) {
+        const dist = Math.hypot(pellet.X - playerPos.X, pellet.Y - playerPos.Y)
+        if (dist < targetDist) {
+            target = pellet
+            targetDist = dist
+        }
+    }
+
+    return target
+}
+
+// Moves the mouse in the direction of the line going through the target
+async function aimAt(page: Page, playerPos: {X: number, Y: number}, target: {X: number, Y: number}) {
+    // Calculate distance to target pellet and move mouse 300px toward it
+    // dx/dist and dy/dist are the direction to the pellet, dividing by dist gives the x and y parts of the unit vector
+    // * 300 puts mouse 300 px from the blob (which is at (640, 360)) in the direction of the line going THROUGH the pellet
+    const dx = target.X - playerPos.X
+    const dy = target.Y - playerPos.Y
+    const dist = Math.hypot(dx, dy)
+
+    // Avoid 0 division
+    if (dist === 0) {
+        return
+    }
+
+    await page.mouse.move(640 + 300 * dx / dist, 360 + 300 * dy / dist)
+}
+
+// Continue steering the player blob to the target pellet until it no longer exists in the latest server update
+async function waitUntilPelletEaten(page: Page, target: {Id: number, X: number, Y: number}) {
+    await expect(async() => {
+        const update = await getLastUpdate(page)
+
+        // As long as the target pellet still exists, keep steering towards it
+        if (update.Pellets[target.Id]) {
+            await aimAt(page, update.PlayerPos, target)
+        }
+
+        expect(update.Pellets[target.Id]).toBeUndefined()
+    }).toPass({timeout: 15_000, intervals: [100]})
+}
+
 // Helper to join game plus handle chromium mousemove on page load
 async function joinGame(page: Page) {
     // baseURL in playwright config autofills host and port
@@ -71,33 +122,11 @@ test("eating pellet removes it and grows blob", async({page}) => {
 
     const update = await getLastUpdate(page)
     const playerPos = update.PlayerPos
-    // Convert and cast it to an array of pellet struct (from server) to satisfy compiler for pellet.X/Y checks
-    const pellets = Object.values(update.Pellets) as { Id: number, X: number, Y: number}[]
 
-    // Find the nearest pellet to blob
-    let target = pellets[0]
-    let targetDist = Infinity
-    for (const pellet of pellets) {
-        const dist = Math.hypot(pellet.X - playerPos.X, pellet.Y - playerPos.Y)
-        if (dist < targetDist) {
-            target = pellet
-            targetDist = dist
-        }
-    }
-
-    // Calculate distance to target pellet and move mouse 300px toward it
-    // dx/dist and dy/dist are the direction to the pellet, dividing by dist gives the x and y parts of the unit vector
-    // * 300 puts mouse 300 px from the blob (which is at (640, 360)) in the direction of the line going THROUGH the pellet
-    const dx = target.X - playerPos.X
-    const dy = target.Y - playerPos.Y
-    const dist = Math.hypot(dx, dy)
-    await page.mouse.move(640 + 300 * dx / dist, 360 + 300 * dy / dist)
+    const target = await getNearestPellet(page, update)
 
     // Wait until target pellet's ID is gone (was eaten)
-    await expect.poll(
-        () => page.evaluate(id => (window as any).lastUpdate.Pellets[id], target.Id),
-        { timeout: 10_000 },
-    ).toBeUndefined()
+    await waitUntilPelletEaten(page, target)
 
     // R should be larger after eating the pellet
     const endPos = await getLastPlayerPos(page)
