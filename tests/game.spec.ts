@@ -93,7 +93,7 @@ async function waitUntilPreyEaten(eaterPage: Page, preyPage: Page) {
         }
 
         expect(preyLastUpdate.IsDead).toBe(true)
-    }).toPass({timeout: 15_000, intervals: [100]})
+    }).toPass({timeout: 25_000, intervals: [100]}) // worst case time is opposite corners, 2830px = ~19 seconds
 }
 
 // Helper to join game plus handle chromium mousemove on page load
@@ -115,16 +115,19 @@ test("blob moves toward cursor", async({page}) => {
 
     // Read start position
     const startPos = await getLastPlayerPos(page)
+    // Steer towards the side with more room (1000 is worldSize midpoint)
+    const direction = startPos.X < 1000 ? 1: -1
 
     // Initial viewport center is at (640, 360)
-    await page.mouse.move(940, 360)
+    await page.mouse.move(640 + 300 * direction, 360)
     await page.waitForTimeout(1000)
 
     // Read end position
     const endPos = await getLastPlayerPos(page)
 
-    // Every 33ms tick we move 5 pixels (const stepSize = 5.0), ~150px/s. + 100 leaves room for tick timing jitter
-    expect(endPos.X).toBeGreaterThanOrEqual(startPos.X + 100)
+    // Every 33ms tick we move 5 pixels (const stepSize = 5.0), ~150px/s
+    // measured 145–150 pixels locally; lower assertion value if it flakes on CI
+    expect((endPos.X - startPos.X) * direction).toBeGreaterThanOrEqual(130)
     // Mouse is level with the blob (screen Y 360), so yDist is 0 and Y never changes
     expect(endPos.Y).toBe(startPos.Y)
 })
@@ -136,10 +139,10 @@ test("blob stops at map edge", async({page}) => {
 
     await page.mouse.move(940, 360)
 
-    // The trip from spawn world coords (x = 1000) to map border (x = 2000) is ~150 px/s so ~6.7 seconds
+    // The trip from spawn coords [0, 2000] to map border (x = 2000) is ~150 px/s so ~13.3 seconds worst case
     await expect.poll(
         () => getLastUpdate(page).then(update => update.PlayerPos.X),
-        {timeout: 10000},
+        {timeout: 15000},
     ).toBe(2000)
 
     // Wait some more after hitting edge of the map, pos.X should stay the same and not go outside map
@@ -205,7 +208,7 @@ test("bigger blob eats smaller blob", async({page}) => {
 
     // page from the same browser context picks up baseURL and the viewport from playwright.config.ts
     const prey = await eater.context().newPage()
-    // Prey spawns at (1000, 1000) and remains still bc mouse is centered
+    // Prey spawns at a random point and remains still bc mouse is centered
     await joinGame(prey)
 
     // Larger blob eats smaller
@@ -232,7 +235,7 @@ test("restart button works", async({page}) => {
 
     // page from the same browser context picks up baseURL and the viewport from playwright.config.ts
     const prey = await eater.context().newPage()
-    // Prey spawns at (1000, 1000) and remains still bc mouse is centered
+    // Prey spawns at a random point and remains still bc mouse is centered
     await joinGame(prey)
 
     // Larger blob eats smaller
@@ -242,7 +245,7 @@ test("restart button works", async({page}) => {
     const restartButton = prey.locator("#restart")
     await expect(restartButton).toBeVisible()
 
-    // prey would respawn directly under eater if we don't kill it, random player spawns still a TODO
+    // There's a tiny chance prey can respawn directly under eater if we don't kill it
     await eater.close()
 
     await restartButton.click()

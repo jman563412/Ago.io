@@ -182,8 +182,8 @@ func handleClientMsg(msg ClientMsg, playerMap map[int64]player, updateChansMap m
 	if msg.isJoining {
 		updateChansMap[msg.id] = msg.updateChan
 		initialPos := posUpdate{
-			1000,
-			1000,
+			rand.Intn(worldSize),
+			rand.Intn(worldSize),
 			initialPlayerRadius,
 		}
 		playerMap[msg.id] = player{

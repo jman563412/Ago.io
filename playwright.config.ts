@@ -8,6 +8,8 @@ export default defineConfig({
   // One server for the whole run, so tests take turns on the same map
   workers: 1,
   fullyParallel: false,
+  // Larger eats smaller test might exceed 30s default per test
+  timeout: 60_000,
   reporter: "list",
   use: {
     baseURL: `http://localhost:${port}`,
