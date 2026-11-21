@@ -21,7 +21,8 @@ let mouseCoordX = window.innerWidth / 2
 let mouseCoordY = window.innerHeight / 2
 
 // Instantiate WS conn with the server
-const socket = new WebSocket("ws://" + location.host + "/ws")
+const protocol = location.protocol === "https:" ? "wss://" : "ws://"
+const socket = new WebSocket(protocol + location.host + "/ws")
 socket.addEventListener("message", (event) => {
     // Reset offest from prev setTransform
     canvasContext.setTransform(1, 0, 0, 1, 0, 0)
