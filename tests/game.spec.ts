@@ -254,7 +254,10 @@ test("restart button works", async({page}) => {
     await expect(async () => {
         const update = await getLastUpdate(prey)
         expect(update.IsDead).toBe(false)
-        expect(update.PlayerPos.R).toBe(50)
+
+        // Blob respawn can land on a pellet and eat it in the first tick, allow a few over 50
+        expect(update.PlayerPos.R).toBeGreaterThanOrEqual(50)
+        expect(update.PlayerPos.R).toBeLessThan(55)
     }).toPass({ timeout: 5_000 })
     
     // Button should no longer be visible
