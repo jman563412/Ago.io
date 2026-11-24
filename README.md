@@ -1,6 +1,8 @@
 # Ago.io
 Welcome to Ago.io, an implementation/spin-off of agar.io. The server is written in Go (unlike C++ as in the original), but the client is written in JS using the canvas element (the same pattern as the original). 
 
+**Play it live:** https://agoio.justind.dev
+
 ## To run:
 Project uses Go 1.27+
 
